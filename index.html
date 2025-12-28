@@ -242,6 +242,24 @@
             margin-bottom: 30px;
         }
 
+        .controls-section {
+            margin-bottom: 20px;
+        }
+
+        .controls-section:last-child {
+            margin-bottom: 0;
+        }
+
+        .controls-label {
+            font-size: 0.85em;
+            color: #94a3b8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            font-weight: 600;
+            margin-bottom: 12px;
+            display: block;
+        }
+
         .filter-buttons {
             display: flex;
             gap: 12px;
@@ -305,9 +323,19 @@
             border-radius: 16px;
             padding: 24px;
             transition: all 0.3s ease;
-            cursor: pointer;
+            cursor: move;
             position: relative;
             overflow: hidden;
+        }
+
+        .task-item.dragging {
+            opacity: 0.5;
+            cursor: grabbing;
+        }
+
+        .task-item.drag-over {
+            border-color: #6366f1;
+            transform: translateX(8px) scale(1.02);
         }
 
         .task-item::before {
@@ -353,6 +381,36 @@
             display: flex;
             align-items: flex-start;
             gap: 16px;
+        }
+
+        .task-number {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, #6366f1, #8b5cf6);
+            border-radius: 8px;
+            font-weight: 700;
+            font-size: 0.9em;
+            color: white;
+            flex-shrink: 0;
+        }
+
+        .drag-handle {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 28px;
+            height: 28px;
+            cursor: grab;
+            color: #64748b;
+            flex-shrink: 0;
+            font-size: 1.2em;
+        }
+
+        .drag-handle:active {
+            cursor: grabbing;
         }
 
         .checkbox-wrapper {
@@ -626,19 +684,36 @@
         </div>
 
         <div class="controls">
-            <div class="filter-buttons">
-                <button class="filter-btn active" onclick="filterTasks('all')">
-                    All Tasks
-                </button>
-                <button class="filter-btn" onclick="filterTasks('pending')">
-                    In Progress
-                </button>
-                <button class="filter-btn" onclick="filterTasks('completed')">
-                    Completed
-                </button>
-                <button class="filter-btn" onclick="filterTasks('overdue')">
-                    Overdue
-                </button>
+            <div class="controls-section">
+                <label class="controls-label">Sort By</label>
+                <div class="filter-buttons">
+                    <button class="filter-btn" onclick="sortByDeadline()">
+                        📅 Sort by Deadline
+                    </button>
+                    <button class="filter-btn" onclick="sortByPriority()">
+                        ⭐ Sort by Priority
+                    </button>
+                    <button class="filter-btn" onclick="resetOrder()">
+                        🔄 Reset Order
+                    </button>
+                </div>
+            </div>
+            <div class="controls-section">
+                <label class="controls-label">Filter</label>
+                <div class="filter-buttons">
+                    <button class="filter-btn active" onclick="filterTasks('all')">
+                        All Tasks
+                    </button>
+                    <button class="filter-btn" onclick="filterTasks('pending')">
+                        In Progress
+                    </button>
+                    <button class="filter-btn" onclick="filterTasks('completed')">
+                        Completed
+                    </button>
+                    <button class="filter-btn" onclick="filterTasks('overdue')">
+                        Overdue
+                    </button>
+                </div>
             </div>
         </div>
 
@@ -659,7 +734,7 @@
     </div>
 
     <script>
-        const tasks = [
+        const defaultTasks = [
             { id: 1, title: "New email signature - Email signature change", deadline: "2026-01-15", completed: false, priority: false },
             { id: 2, title: "Photoshoot - Guard & FM people selection, Uniform Update with tailor", deadline: "2026-01-15", completed: false, priority: false },
             { id: 3, title: "2D video", deadline: "2026-01-31", completed: false, priority: false },
@@ -679,18 +754,18 @@
             { id: 17, title: "Newsletter - Flip Book", deadline: "2026-01-30", completed: false, priority: false }
         ];
 
+        let tasks = JSON.parse(JSON.stringify(defaultTasks));
         let currentFilter = 'all';
+        let draggedElement = null;
 
         function loadTasks() {
-            const saved = localStorage.getItem('taskTrackerProData');
+            const saved = JSON.parse(localStorage.getItem('taskTrackerProData') || 'null');
             if (saved) {
                 try {
-                    const savedTasks = JSON.parse(saved);
-                    savedTasks.forEach(savedTask => {
-                        const task = tasks.find(t => t.id === savedTask.id);
-                        if (task) {
-                            task.completed = savedTask.completed;
-                        }
+                    // Restore order and completion status
+                    tasks = saved.map(savedTask => {
+                        const defaultTask = defaultTasks.find(t => t.id === savedTask.id);
+                        return defaultTask ? { ...defaultTask, completed: savedTask.completed } : savedTask;
                     });
                     showToast('✨ Previous session restored!');
                 } catch (e) {
@@ -733,17 +808,75 @@
             }
         }
 
+        function handleDragStart(e, index) {
+            draggedElement = index;
+            e.target.classList.add('dragging');
+            e.dataTransfer.effectAllowed = 'move';
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = 'move';
+            const target = e.target.closest('.task-item');
+            if (target) {
+                target.classList.add('drag-over');
+            }
+        }
+
+        function handleDragLeave(e) {
+            const target = e.target.closest('.task-item');
+            if (target) {
+                target.classList.remove('drag-over');
+            }
+        }
+
+        function handleDrop(e, dropIndex) {
+            e.preventDefault();
+            const target = e.target.closest('.task-item');
+            if (target) {
+                target.classList.remove('drag-over');
+            }
+
+            if (draggedElement !== null && draggedElement !== dropIndex) {
+                const filteredTasks = getFilteredTasks();
+                const draggedTask = filteredTasks[draggedElement];
+                const draggedTaskIndex = tasks.findIndex(t => t.id === draggedTask.id);
+                const droppedTask = filteredTasks[dropIndex];
+                const droppedTaskIndex = tasks.findIndex(t => t.id === droppedTask.id);
+
+                // Remove and insert
+                tasks.splice(draggedTaskIndex, 1);
+                const newDropIndex = tasks.findIndex(t => t.id === droppedTask.id);
+                tasks.splice(draggedTaskIndex < droppedTaskIndex ? newDropIndex + 1 : newDropIndex, 0, draggedTask);
+
+                saveTasks();
+                renderTasks();
+                showToast('📍 Task order updated');
+            }
+        }
+
+        function handleDragEnd(e) {
+            e.target.classList.remove('dragging');
+            document.querySelectorAll('.task-item').forEach(item => {
+                item.classList.remove('drag-over');
+            });
+            draggedElement = null;
+        }
+
+        function getFilteredTasks() {
+            if (currentFilter === 'pending') {
+                return tasks.filter(t => !t.completed);
+            } else if (currentFilter === 'completed') {
+                return tasks.filter(t => t.completed);
+            } else if (currentFilter === 'overdue') {
+                return tasks.filter(t => !t.completed && isOverdue(t.deadline));
+            }
+            return tasks;
+        }
+
         function renderTasks() {
             const tasksList = document.getElementById('tasksList');
-            let filteredTasks = tasks;
-
-            if (currentFilter === 'pending') {
-                filteredTasks = tasks.filter(t => !t.completed);
-            } else if (currentFilter === 'completed') {
-                filteredTasks = tasks.filter(t => t.completed);
-            } else if (currentFilter === 'overdue') {
-                filteredTasks = tasks.filter(t => !t.completed && isOverdue(t.deadline));
-            }
+            const filteredTasks = getFilteredTasks();
 
             if (filteredTasks.length === 0) {
                 tasksList.innerHTML = `
@@ -756,12 +889,21 @@
                 return;
             }
 
-            tasksList.innerHTML = filteredTasks.map(task => {
+            tasksList.innerHTML = filteredTasks.map((task, index) => {
                 const overdue = !task.completed && isOverdue(task.deadline);
                 return `
                     <div class="task-item fade-in ${task.completed ? 'completed' : ''} ${overdue ? 'overdue' : ''}" 
-                         onclick="toggleTask(${task.id}, event)">
+                         draggable="true"
+                         ondragstart="handleDragStart(event, ${index})"
+                         ondragover="handleDragOver(event)"
+                         ondragleave="handleDragLeave(event)"
+                         ondrop="handleDrop(event, ${index})"
+                         ondragend="handleDragEnd(event)">
                         <div class="task-header">
+                            <div class="drag-handle" title="Drag to reorder">
+                                ⋮⋮
+                            </div>
+                            <div class="task-number">${index + 1}</div>
                             <div class="checkbox-wrapper">
                                 <input type="checkbox" 
                                        class="checkbox" 
@@ -803,9 +945,57 @@
 
         function filterTasks(filter) {
             currentFilter = filter;
-            document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
-            event.target.classList.add('active');
+            document.querySelectorAll('.filter-btn').forEach(btn => {
+                if (btn.textContent.includes('All Tasks') && filter === 'all') btn.classList.add('active');
+                else if (btn.textContent.includes('In Progress') && filter === 'pending') btn.classList.add('active');
+                else if (btn.textContent.includes('Completed') && filter === 'completed') btn.classList.add('active');
+                else if (btn.textContent.includes('Overdue') && filter === 'overdue') btn.classList.add('active');
+                else btn.classList.remove('active');
+            });
             renderTasks();
+        }
+
+        function sortByDeadline() {
+            tasks.sort((a, b) => {
+                const dateA = new Date(a.deadline);
+                const dateB = new Date(b.deadline);
+                return dateA - dateB;
+            });
+            saveTasks();
+            renderTasks();
+            showToast('📅 Sorted by deadline');
+        }
+
+        function sortByPriority() {
+            tasks.sort((a, b) => {
+                // Priority tasks first
+                if (a.priority && !b.priority) return -1;
+                if (!a.priority && b.priority) return 1;
+                // Then by deadline
+                const dateA = new Date(a.deadline);
+                const dateB = new Date(b.deadline);
+                return dateA - dateB;
+            });
+            saveTasks();
+            renderTasks();
+            showToast('⭐ Sorted by priority and deadline');
+        }
+
+        function resetOrder() {
+            tasks = JSON.parse(JSON.stringify(defaultTasks));
+            const saved = JSON.parse(localStorage.getItem('taskTrackerProData') || 'null');
+            if (saved) {
+                saved.forEach(savedTask => {
+                    const task = tasks.find(t => t.id === savedTask.id);
+                    if (task) {
+                        task.completed = savedTask.completed;
+                    }
+                });
+            }
+            saveTasks();
+            renderTasks();
+            updateProgress();
+            showToast('🔄 Order reset to default');
         }
 
         function exportData() {
